@@ -90,3 +90,14 @@ open /Applications/Mivo.app --args --dev
 当前流程用于自行编译、自行签名和本机安装。不同电脑首次配置会得到各自的本地身份，不应共享维护者的签名私钥，也不要把自己的本机签名产物当成经过 Developer ID 签名和公证的通用发布版。
 
 对外提供安装包前，需要另行建立 Developer ID 签名、公证、版本校验与真实设备测试流程。不要通过关闭系统保护或修改 TCC 数据库绕过安装和授权问题。
+
+
+## 制作 DMG
+
+用已签名的应用制作拖动安装包，不重新构建或更换应用签名：
+
+```bash
+./scripts/package-dmg.sh .build/Mivo.app .build/Mivo-macos-arm64.dmg
+```
+
+输出路径必须尚不存在。DMG 包含 Mivo、Applications 文件夹快捷入口、安装说明及 MIT 许可证。封装为 DMG 不代表应用已获得 Developer ID 签名或公证。
