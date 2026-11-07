@@ -33,7 +33,7 @@ trap 'rm -rf "$STAGING"' EXIT
 mkdir -p "$STAGING/Mivo.app/Contents/MacOS" "$STAGING/Mivo.app/Contents/Resources"
 cp "$ROOT/Info.plist" "$STAGING/Mivo.app/Contents/Info.plist"
 cp "$ICON" "$STAGING/Mivo.app/Contents/Resources/Mivo.icns"
-MACOSX_DEPLOYMENT_TARGET=13.0 swiftc -parse-as-library -O \
+swiftc -target "$(/usr/bin/uname -m)-apple-macosx13.0" -parse-as-library -O \
   -framework SwiftUI -framework AppKit -framework ApplicationServices \
   -framework CoreGraphics -framework IOKit \
   -o "$STAGING/Mivo.app/Contents/MacOS/DJIMicHold" \

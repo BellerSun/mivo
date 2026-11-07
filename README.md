@@ -13,7 +13,9 @@
 
 ## 安装
 
-目前通过源码构建，需 macOS 13+、Xcode Command Line Tools、Python 3 和 OpenSSL / 系统 LibreSSL。安装新版前先退出 Mivo。
+[下载 Apple Silicon 试用包](https://github.com/BellerSun/mivo/releases/tag/v1.0.0)（本机开发签名，未公证）。安装新版前先退出 Mivo，再将解压后的应用放入 `/Applications`。
+
+也可从源码构建：需 macOS 13+、Xcode Command Line Tools、Python 3 和 OpenSSL / 系统 LibreSSL。
 
 ```bash
 git clone https://github.com/BellerSun/mivo.git
