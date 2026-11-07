@@ -1,9 +1,11 @@
 import Foundation
+import CoreGraphics
 
 @main
 struct HoldModelTests {
     static func main() {
         testMappingPreservation()
+        testSimulationConfiguration()
         let domain = "local.mivo.tests.\(UUID().uuidString)"
         let preferences = UserDefaults(suiteName: domain)!
         defer { preferences.removePersistentDomain(forName: domain) }
@@ -89,13 +91,13 @@ struct HoldModelTests {
         check(model.controlEnabled && !model.controlling, "未连接时控制开关仍可修改启用偏好")
         model.simulatedDevice = .ready
         check(model.controlling, "离线启用后连接即恢复控制")
-        check(model.guideInstruction.contains("开始监听"), "就绪指引高亮配对键开始监听")
+        check(model.guideInstruction.contains("按住快捷键"), "就绪指引高亮配对键开始监听")
         press(model)
-        check(model.guideInstruction.contains("结束监听"), "监听指引随真实状态更新")
+        check(model.guideInstruction.contains("松开快捷键"), "监听指引随真实状态更新")
         press(model)
         check(model.guideInstruction.contains("发送回车"), "发送窗口指引随真实状态更新")
         model.sendOnRepress = false
-        check(model.guideInstruction.contains("开始监听"), "关闭发送立即更新操作指引")
+        check(model.guideInstruction.contains("按住快捷键"), "关闭发送立即更新操作指引")
         check(model.nextButtonAction == .startListening, "结束后关闭发送设置，悬浮提示立即跳过发送")
 
         model.setControlEnabled(false)
@@ -124,6 +126,82 @@ struct HoldModelTests {
         feedback.stopControl()
         check(!feedback.pairingKeyDown, "停止控制清除按钮按下外观")
         print("全部 HoldModel 行为检查通过。")
+    }
+
+    static func testSimulationConfiguration() {
+        let domain = "local.mivo.shortcut-tests.\(UUID().uuidString)"
+        let preferences = UserDefaults(suiteName: domain)!
+        defer { preferences.removePersistentDomain(forName: domain) }
+        var output: [CGEvent] = []
+        let model = HoldModel(preferences: preferences, developerMode: true, observeOutput: { output += $0 })
+        model.reconcile()
+        check(model.simulationMode == .hold && model.shortcutPreset == .rightCommand, "旧配置默认兼容右 Command 按住模式")
+        for preset in [ShortcutPreset.leftCommand, .rightCommand, .fn] {
+            model.configureShortcut(preset: preset)
+            output.removeAll()
+            press(model)
+            check(output.count == 1 && output[0].type == .flagsChanged && output[0].flags == SimulatedShortcut.modifierFlags(for: preset.shortcut!.keys[0]),
+                  "\(preset.title) 输出正确侧别与修饰标志")
+            press(model)
+            check(output.count == 2 && output[1].flags.isEmpty && model.heldShortcut == nil, "\(preset.title) 第二次短按完整释放")
+        }
+        let chord = SimulatedShortcut.parse("右 Command + Option + Space")!
+        check(chord.keys == [0x36, 0x3A, 49], "自定义组合保留左右修饰键与普通键")
+        for invalid in ["", "A + B", "Space + Command", "Command + Command", "unknown", "Option +", "Fn + F99"] {
+            check(SimulatedShortcut.parse(invalid) == nil, "拒绝无效快捷键：\(invalid)")
+        }
+        model.configureShortcut(preset: .custom, custom: chord)
+        output.removeAll()
+        press(model)
+        check(output.count == 3 && output.last!.type == .keyDown && output.last!.flags.contains([.maskCommand, .maskAlternate]),
+              "组合键先按修饰键再按普通键")
+        press(model)
+        check(output.count == 6 && output[3].type == .keyUp && output[3].getIntegerValueField(.keyboardEventKeycode) == 49 && output.last!.flags.isEmpty,
+              "组合键按相反顺序松开，不残留修饰键")
+        check(output.allSatisfy { $0.getIntegerValueField(.eventSourceUserData) == mivoEventTag }, "所有模拟事件带来源标记")
+        model.configureShortcut(mode: .tap)
+        output.removeAll()
+        for _ in 0..<3 { press(model) }
+        check(output.count == 18 && model.phase == .idle && model.heldShortcut == nil && !model.canSend,
+              "点按模式每次输出完整组合，不进入监听或发送窗口")
+        check(model.nextButtonAction == .tapShortcut && model.nextActionTitle == "点按快捷键", "点按悬浮状态不伪装成开始监听")
+        check(model.sendOnRepress, "点按模式保留原有再按发送偏好")
+        let restored = HoldModel(preferences: preferences, developerMode: true)
+        check(restored.simulationMode == .tap && restored.shortcutPreset == .custom && restored.customShortcut == chord,
+              "模式、预设与自定义组合持久保存")
+        model.configureShortcut(mode: .hold)
+        press(model)
+        output.removeAll()
+        model.configureShortcut(preset: .leftCommand)
+        check(output.count == 3 && output.first!.getIntegerValueField(.keyboardEventKeycode) == 49 && output.last!.flags.isEmpty && model.heldShortcut == nil,
+              "切换快捷键先释放旧组合，再使用新键")
+        press(model)
+        output.removeAll()
+        model.configureShortcut(mode: .tap)
+        check(output.count == 1 && output[0].getIntegerValueField(.keyboardEventKeycode) == 0x37 && output[0].flags.isEmpty,
+              "切换点按模式释放旧按住键")
+        model.configureShortcut(mode: .hold, preset: .rightCommand)
+        press(model)
+        output.removeAll()
+        model.setControlEnabled(false)
+        check(output.count == 1 && output[0].flags.isEmpty && model.heldShortcut == nil, "暂停释放当前模拟键")
+        model.setControlEnabled(true)
+        press(model)
+        output.removeAll()
+        model.simulatedDevice = .disconnected
+        check(output.count == 1 && output[0].flags.isEmpty && model.heldShortcut == nil, "断连释放当前模拟键")
+        model.simulatedDevice = .ready
+        let ordinary = CGEvent(keyboardEventSource: nil, virtualKey: 0x36, keyDown: true)!
+        check(!model.handleCarrier(ordinary), "真实 Command 键不作为设备事件拦截")
+        let unrelated = CGEvent(keyboardEventSource: nil, virtualKey: carrierKey, keyDown: true)!
+        model.lastHIDAt = 0
+        check(!model.handleCarrier(unrelated), "无关联设备事件时不吞掉真实 F20")
+        model.configureShortcut(mode: .tap, preset: .custom, custom: SimulatedShortcut(keys: [carrierKey]))
+        press(model)
+        let injected = output.last!
+        check(!model.handleCarrier(injected), "自定义 F20 的注入事件不会递归触发")
+        preferences.set(try! JSONEncoder().encode(SimulatedShortcut(keys: [65535])), forKey: "customShortcut")
+        check(HoldModel(preferences: preferences, developerMode: true).customShortcut.isValid, "损坏的持久配置回退到有效快捷键")
     }
 
     static func testMappingPreservation() {

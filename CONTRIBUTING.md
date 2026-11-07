@@ -2,7 +2,7 @@
 
 代码、文档和自有图标采用 MIT；提交贡献前请确认有权以相同许可证提供内容，不引入来源不明的代码或素材。保留既有作者署名。
 
-先阅读 [README.md](README.md) 配置本机开发工具。不要共享签名私钥；已有本机身份时持续复用。使用 `./scripts/build-and-install.sh --build-only` 验证构建，不必安装或启动应用。
+先阅读[开发与签名](docs/development.md)配置本机开发工具。不要共享签名私钥；已有本机身份时持续复用。使用 `./scripts/build-and-install.sh --build-only` 验证构建，不必安装或启动应用。
 
 行为变更运行 `./scripts/test.sh`；悬浮窗变更运行 `./scripts/test-floating.sh`；签名变更必须运行 `./scripts/test-signing.sh`。映射测试使用注入的内存读写，不修改真实设备。测试无法代替硬件、千问联动及真实 TCC 授权验证，PR 中需分别说明实测结果和未覆盖项。
 

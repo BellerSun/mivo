@@ -13,14 +13,13 @@ let productID = 0x4011
 let volumeIncrement: UInt32 = 0xE9
 let volumeDecrement: UInt32 = 0xEA
 let consumerPage: UInt32 = 0x0C
-let rightCommand: Int64 = 0x36
 let returnKey: CGKeyCode = 0x24
 let samePressWindow: TimeInterval = 0.05
 let sendWindow: TimeInterval = 3
 
 enum Phase: String {
     case idle = "空闲"
-    case holding = "监听中"
+    case holding = "按住中"
     case released = "已松开"
 }
 
@@ -35,7 +34,113 @@ enum Pending {
     case holdDown
     case release
     case send
+    case tap
 }
+
+enum SimulationMode: String, CaseIterable, Identifiable {
+    case hold, tap
+    var id: String { rawValue }
+    var title: String { self == .hold ? "按住" : "点按" }
+}
+
+enum ShortcutPreset: String, CaseIterable, Identifiable {
+    case leftCommand, rightCommand, fn, custom
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .leftCommand: return "左 Command ⌘"
+        case .rightCommand: return "右 Command ⌘"
+        case .fn: return "Fn / 🌐（实验）"
+        case .custom: return "自定义…"
+        }
+    }
+    var shortcut: SimulatedShortcut? {
+        switch self {
+        case .leftCommand: return SimulatedShortcut(keys: [0x37])
+        case .rightCommand: return SimulatedShortcut(keys: [0x36])
+        case .fn: return SimulatedShortcut(keys: [0x3F])
+        case .custom: return nil
+        }
+    }
+}
+
+struct SimulatedShortcut: Codable, Equatable {
+    let keys: [CGKeyCode]
+    static let modifierNames: [CGKeyCode: String] = [
+        0x37: "左 Command", 0x36: "右 Command", 0x3A: "左 Option", 0x3D: "右 Option",
+        0x3B: "左 Control", 0x3E: "右 Control", 0x38: "左 Shift", 0x3C: "右 Shift", 0x3F: "Fn"
+    ]
+    static let names: [CGKeyCode: String] = [
+        0:"A",1:"S",2:"D",3:"F",4:"H",5:"G",6:"Z",7:"X",8:"C",9:"V",11:"B",
+        12:"Q",13:"W",14:"E",15:"R",16:"Y",17:"T",18:"1",19:"2",20:"3",21:"4",22:"6",23:"5",
+        24:"=",25:"9",26:"7",27:"-",28:"8",29:"0",30:"]",31:"O",32:"U",33:"[",34:"I",35:"P",
+        36:"Return",37:"L",38:"J",39:"'",40:"K",41:";",42:"\\",43:",",44:"/",45:"N",46:"M",47:".",
+        48:"Tab",49:"Space",50:"`",51:"Backspace",53:"Escape",65:"KeypadDecimal",67:"KeypadMultiply",
+        69:"KeypadPlus",71:"KeypadClear",75:"KeypadDivide",76:"KeypadEnter",78:"KeypadMinus",
+        81:"KeypadEquals",82:"Keypad0",83:"Keypad1",84:"Keypad2",85:"Keypad3",86:"Keypad4",
+        87:"Keypad5",88:"Keypad6",89:"Keypad7",91:"Keypad8",92:"Keypad9",
+        64:"F17",79:"F18",80:"F19",90:"F20",96:"F5",97:"F6",98:"F7",99:"F3",100:"F8",101:"F9",
+        103:"F11",105:"F13",106:"F16",107:"F14",109:"F10",111:"F12",113:"F15",114:"Help",
+        115:"Home",116:"PageUp",117:"Delete",118:"F4",119:"End",120:"F2",121:"PageDown",122:"F1",
+        123:"Left",124:"Right",125:"Down",126:"Up"
+    ]
+    var isValid: Bool {
+        !keys.isEmpty && keys.count <= 5 && Set(keys).count == keys.count &&
+        keys.allSatisfy { Self.names[$0] != nil || Self.modifierNames[$0] != nil } &&
+        keys.filter { Self.modifierNames[$0] == nil }.count <= 1 &&
+        !keys.dropLast().contains { Self.modifierNames[$0] == nil }
+    }
+    var title: String { keys.map { Self.modifierNames[$0] ?? Self.names[$0] ?? "?" }.joined(separator: " + ") }
+    var includesFn: Bool { keys.contains(0x3F) }
+
+    static func parse(_ text: String) -> SimulatedShortcut? {
+        let aliases: [String: CGKeyCode] = ["command":0x37,"cmd":0x37,"⌘":0x37,"option":0x3A,"alt":0x3A,"⌥":0x3A,
+            "control":0x3B,"ctrl":0x3B,"⌃":0x3B,"shift":0x38,"⇧":0x38,"enter":36,"spacebar":49,
+            "leftcommand":0x37,"rightcommand":0x36,"leftoption":0x3A,"rightoption":0x3D,
+            "leftcontrol":0x3B,"rightcontrol":0x3E,"leftshift":0x38,"rightshift":0x3C,"🌐":0x3F]
+        func normalized(_ value: String) -> String { value.lowercased().filter { !$0.isWhitespace } }
+        let known = Dictionary(uniqueKeysWithValues: (names.merging(modifierNames) { _, next in next }).map { (normalized($0.value), $0.key) })
+        let tokens = text.components(separatedBy: "+").map(normalized)
+        let keys = tokens.compactMap { known[$0] ?? aliases[$0] }
+        let result = SimulatedShortcut(keys: keys)
+        return keys.count == tokens.count && result.isValid ? result : nil
+    }
+
+    static func modifierFlags(for key: CGKeyCode) -> CGEventFlags {
+        switch key {
+        case 0x37: return CGEventFlags(rawValue: CGEventFlags.maskCommand.rawValue | 0x08)
+        case 0x36: return CGEventFlags(rawValue: CGEventFlags.maskCommand.rawValue | 0x10)
+        case 0x38: return CGEventFlags(rawValue: CGEventFlags.maskShift.rawValue | 0x02)
+        case 0x3C: return CGEventFlags(rawValue: CGEventFlags.maskShift.rawValue | 0x04)
+        case 0x3A: return CGEventFlags(rawValue: CGEventFlags.maskAlternate.rawValue | 0x20)
+        case 0x3D: return CGEventFlags(rawValue: CGEventFlags.maskAlternate.rawValue | 0x40)
+        case 0x3B: return CGEventFlags(rawValue: CGEventFlags.maskControl.rawValue | 0x01)
+        case 0x3E: return CGEventFlags(rawValue: CGEventFlags.maskControl.rawValue | 0x2000)
+        case 0x3F: return .maskSecondaryFn
+        default: return []
+        }
+    }
+
+    func events(pressed: Bool) -> [CGEvent]? {
+        guard isValid else { return nil }
+        let source = CGEventSource(stateID: .privateState)
+        var active: [CGKeyCode] = pressed ? [] : keys
+        var result: [CGEvent] = []
+        for key in pressed ? keys : Array(keys.reversed()) {
+            if pressed { active.append(key) } else { active.removeAll { $0 == key } }
+            guard let event = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: pressed) else { return nil }
+            if Self.modifierNames[key] != nil { event.type = .flagsChanged }
+            event.flags = active.reduce(CGEventFlags()) { $0.union(Self.modifierFlags(for: $1)) }
+            event.setIntegerValueField(.eventSourceUserData, value: mivoEventTag)
+            result.append(event)
+        }
+        return result
+    }
+}
+
+// F20 is only a transport key for receiver reports, never the user's selected output.
+let carrierKey: CGKeyCode = 90
+let mivoEventTag: Int64 = 0x4D49564F
 
 // Each lease owns only one HID service and preserves its pre-existing mappings.
 typealias KeyMappings = [[String: UInt64]]
@@ -63,7 +168,7 @@ final class KeyMappingLease {
         let previous = try read()
         let sources: Set<UInt64> = [0xC000000E9, 0xC000000EA]
         var next = previous.filter { !sources.contains($0[mappingSource] ?? 0) }
-        next += sources.sorted().map { [mappingSource: $0, mappingDestination: 0x7000000E7] }
+        next += sources.sorted().map { [mappingSource: $0, mappingDestination: 0x70000006F] }
         original = previous
         applied = next
         try write(next)
@@ -131,23 +236,6 @@ final class ReceiverKeyMappings {
     }
 }
 
-func postReturn() {
-    let source = CGEventSource(stateID: .hidSystemState)
-    let down = CGEvent(keyboardEventSource: source, virtualKey: returnKey, keyDown: true)
-    let up = CGEvent(keyboardEventSource: source, virtualKey: returnKey, keyDown: false)
-    down?.post(tap: .cghidEventTap)
-    up?.post(tap: .cghidEventTap)
-}
-
-func releaseStuckCommand() {
-    let source = CGEventSource(stateID: .hidSystemState)
-    guard let up = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(rightCommand), keyDown: false) else { return }
-    up.type = .flagsChanged
-    up.flags = []
-    up.setIntegerValueField(.keyboardEventKeycode, value: rightCommand)
-    up.post(tap: .cghidEventTap)
-}
-
 func receiverIsConnected() -> Bool {
     let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
     IOHIDManagerSetDeviceMatching(manager, [
@@ -174,14 +262,15 @@ struct SystemPermissions {
 }
 
 enum NextButtonAction {
-    case unavailable, startListening, stopListening, sendReturn
+    case unavailable, startListening, stopListening, sendReturn, tapShortcut
 
     var title: String {
         switch self {
         case .unavailable: return "暂不可用"
-        case .startListening: return "开始监听"
-        case .stopListening: return "结束监听"
+        case .startListening: return "按住快捷键"
+        case .stopListening: return "松开快捷键"
         case .sendReturn: return "发送回车"
+        case .tapShortcut: return "点按快捷键"
         }
     }
 
@@ -191,6 +280,7 @@ enum NextButtonAction {
         case .startListening: return "mic"
         case .stopListening: return "stop"
         case .sendReturn: return "return"
+        case .tapShortcut: return "keyboard"
         }
     }
 }
@@ -205,6 +295,13 @@ enum FloatingHUDStyle: String, CaseIterable, Identifiable {
 final class HoldModel: ObservableObject {
     private let permissionProbe: () -> SystemPermissions
     private let preferences: UserDefaults
+    private let observeOutput: (([CGEvent]) -> Void)?
+    @Published private(set) var simulationMode: SimulationMode
+    @Published private(set) var shortcutPreset: ShortcutPreset
+    @Published private(set) var customShortcut: SimulatedShortcut
+    var selectedShortcut: SimulatedShortcut { shortcutPreset.shortcut ?? customShortcut }
+    private(set) var heldShortcut: SimulatedShortcut?
+    private var outputGeneration = 0
     @Published var floatingVisible: Bool {
         didSet { preferences.set(floatingVisible, forKey: "floatingVisible") }
     }
@@ -245,7 +342,6 @@ final class HoldModel: ObservableObject {
     var gesture: Phase = .idle
     var pending: Pending?
     var swallowUp = false
-    var passUp = false
     var held: [UInt32: Bool] = [:]
     lazy var receiverMappings = ReceiverKeyMappings()
     var manager: IOHIDManager?
@@ -256,9 +352,17 @@ final class HoldModel: ObservableObject {
 
     init(preferences: UserDefaults = .standard,
          developerMode: Bool = ProcessInfo.processInfo.arguments.contains("--dev"),
-         permissionProbe: @escaping () -> SystemPermissions = SystemPermissions.current) {
+         permissionProbe: @escaping () -> SystemPermissions = SystemPermissions.current,
+         observeOutput: (([CGEvent]) -> Void)? = nil) {
         self.permissionProbe = permissionProbe
         self.preferences = preferences
+        self.observeOutput = observeOutput
+        self.simulationMode = SimulationMode(rawValue: preferences.string(forKey: "simulationMode") ?? "") ?? .hold
+        self.shortcutPreset = ShortcutPreset(rawValue: preferences.string(forKey: "shortcutPreset") ?? "") ?? .rightCommand
+        if let data = preferences.data(forKey: "customShortcut"),
+           let saved = try? JSONDecoder().decode(SimulatedShortcut.self, from: data), saved.isValid {
+            self.customShortcut = saved
+        } else { self.customShortcut = SimulatedShortcut(keys: [0x3A, 49]) }
         self.developerMode = developerMode
         self.sendOnRepress = preferences.object(forKey: "sendOnRepress") as? Bool ?? true
         self.controlEnabled = preferences.object(forKey: "controlEnabled") as? Bool ?? true
@@ -296,10 +400,11 @@ final class HoldModel: ObservableObject {
     }
 
     var sendRemaining: TimeInterval { max(0, sendWindow - (uptime - releasedAt)) }
-    var canSend: Bool { controlling && phase == .released && sendOnRepress && sendRemaining > 0 }
+    var canSend: Bool { simulationMode == .hold && controlling && phase == .released && sendOnRepress && sendRemaining > 0 }
     var nextButtonAction: NextButtonAction {
         guard receiverConnected, accessibilityOK, inputMonitorOK, controlEnabled,
               controlling, controlError == nil else { return .unavailable }
+        if simulationMode == .tap { return .tapShortcut }
         if phase == .holding { return .stopListening }
         return canSend ? .sendReturn : .startListening
     }
@@ -308,8 +413,8 @@ final class HoldModel: ObservableObject {
         if !accessibilityOK || !inputMonitorOK { return "还需完成授权" }
         if !controlEnabled { return "已暂停" }
         if !controlling { return "暂时无法使用" }
-        if phase == .holding { return "正在监听" }
-        if phase == .released { return "监听已结束" }
+        if phase == .holding { return "保持按下" }
+        if phase == .released { return "已松开" }
         return "已就绪"
     }
     var detail: String {
@@ -322,9 +427,10 @@ final class HoldModel: ObservableObject {
         if !receiverConnected { return "先通过 USB 连接接收器" }
         if !accessibilityOK || !inputMonitorOK { return "先在设置中完成授权" }
         if !controlEnabled { return "先开启下方麦克风控制" }
-        if phase == .holding { return "短按高亮配对键，结束监听" }
+        if simulationMode == .tap { return "短按高亮键，点按快捷键" }
+        if phase == .holding { return "短按高亮配对键，松开快捷键" }
         if canSend { return "3 秒内再短按高亮键，发送回车" }
-        return "短按高亮配对键，开始监听"
+        return "短按高亮配对键，按住快捷键"
     }
 
     var hint: String {
@@ -332,9 +438,10 @@ final class HoldModel: ObservableObject {
         if !accessibilityOK || !inputMonitorOK { return "开启辅助功能和输入监控" }
         if !controlEnabled { return "开启控制后恢复使用" }
         if !controlling { return "请重试，或查看诊断日志" }
-        if phase == .holding { return "再按一下，结束语音输入" }
+        if simulationMode == .tap { return "按一下，点按快捷键" }
+        if phase == .holding { return "再按一下，松开快捷键" }
         if canSend { return "再按一下，发送回车" }
-        return "按一下接收器，开始语音输入"
+        return "按一下配对键，按住快捷键"
     }
     var symbol: String {
         if !receiverConnected { return "cable.connector" }
@@ -393,16 +500,64 @@ final class HoldModel: ObservableObject {
         note(enabled ? "开发模式已开启：所有键盘输出仅记录日志。" : "已退出开发模式，恢复真实设备。")
     }
 
+    var shortcutDescription: String { "\(simulationMode.title) · \(selectedShortcut.title)" }
+    var nextActionTitle: String { nextButtonAction.title }
+    var modeInstruction: String {
+        simulationMode == .hold ? "短按一次按住快捷键，再按一次松开。" : "每次短按，发送一次完整按键。"
+    }
+
+    func configureShortcut(mode: SimulationMode? = nil, preset: ShortcutPreset? = nil,
+                           custom: SimulatedShortcut? = nil) {
+        guard custom?.isValid != false else { return }
+        // Release the OLD shortcut before replacing preferences, and invalidate queued output.
+        outputGeneration += 1
+        releaseOutput()
+        gesture = .idle; phase = .idle; pending = nil; releasedAt = 0
+        if let mode { simulationMode = mode }
+        if let custom { customShortcut = custom }
+        if let preset { shortcutPreset = preset }
+        preferences.set(simulationMode.rawValue, forKey: "simulationMode")
+        preferences.set(shortcutPreset.rawValue, forKey: "shortcutPreset")
+        preferences.set(try? JSONEncoder().encode(customShortcut), forKey: "customShortcut")
+        note("按键设置：\(shortcutDescription)")
+    }
+
     func simulatePress() {
         guard developerMode, controlling else { return }
         handleHID(page: consumerPage, usage: volumeIncrement, value: 1)
         handleHID(page: consumerPage, usage: volumeIncrement, value: 0)
         for down in [true, false] {
-            guard let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(rightCommand), keyDown: down) else { continue }
-            event.type = .flagsChanged
-            event.flags = down ? .maskCommand : []
-            let swallowed = handleCommand(event)
-            note("[模拟] 右 Command \(down ? "按下" : "松开") · \(swallowed ? "拦截" : "放行")")
+            guard let event = CGEvent(keyboardEventSource: nil, virtualKey: carrierKey, keyDown: down) else { continue }
+            _ = handleCarrier(event)
+        }
+    }
+
+    private func emit(_ events: [CGEvent], description: String) {
+        observeOutput?(events)
+        if developerMode { note("[模拟] \(description)（未向系统发送）") }
+        else { for event in events { event.post(tap: .cghidEventTap) } }
+    }
+
+    private func releaseOutput() {
+        guard let shortcut = heldShortcut else { return }
+        if let events = shortcut.events(pressed: false) {
+            emit(events, description: "松开 \(shortcut.title)")
+        }
+        heldShortcut = nil
+    }
+
+    private func perform(_ action: Pending) {
+        switch action {
+        case .holdDown:
+            let shortcut = selectedShortcut
+            guard let events = shortcut.events(pressed: true) else { return }
+            heldShortcut = shortcut
+            emit(events, description: "按住 \(shortcut.title)")
+        case .release: releaseOutput()
+        case .tap, .send:
+            let shortcut = action == .send ? SimulatedShortcut(keys: [returnKey]) : selectedShortcut
+            guard let down = shortcut.events(pressed: true), let up = shortcut.events(pressed: false) else { return }
+            emit(down + up, description: action == .send ? "发送回车" : "点按 \(shortcut.title)")
         }
     }
 
@@ -532,9 +687,7 @@ final class HoldModel: ObservableObject {
         }
         controlling = true
         refreshPermissions()
-        note(sendOnRepress
-            ? "已开启。短按开始，再短按结束，3 秒内再按发送。"
-            : "已开启。短按开始，再短按结束。")
+        note("已开启：\(shortcutDescription)。")
     }
 
     func restoreReceiverMappings() {
@@ -546,9 +699,8 @@ final class HoldModel: ObservableObject {
     }
 
     func stopControl() {
-        if gesture == .holding {
-            if developerMode { note("[模拟] 释放右 Command") } else { releaseStuckCommand() }
-        }
+        outputGeneration += 1
+        releaseOutput()
         if let keyTap {
             CGEvent.tapEnable(tap: keyTap, enable: false)
         }
@@ -571,7 +723,6 @@ final class HoldModel: ObservableObject {
         phase = .idle
         pending = nil
         swallowUp = false
-        passUp = false
         controlling = false
         refreshPermissions()
         note("已暂停。")
@@ -581,7 +732,7 @@ final class HoldModel: ObservableObject {
     func installTap() -> Bool {
         guard !developerMode else { return true }
         if keyTap != nil { return true }
-        let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
+        let mask = CGEventMask((1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue))
         keyTap = CGEvent.tapCreate(
             tap: .cghidEventTap,
             place: .headInsertEventTap,
@@ -594,7 +745,7 @@ final class HoldModel: ObservableObject {
                     }
                     return Unmanaged.passUnretained(event)
                 }
-                if HoldModel.shared.handleCommand(event) {
+                if HoldModel.shared.handleCarrier(event) {
                     return nil
                 }
                 return Unmanaged.passUnretained(event)
@@ -627,12 +778,19 @@ final class HoldModel: ObservableObject {
         lastHIDAt = now
         buttonEventCount += 1
         uptime = now
+        if simulationMode == .tap {
+            gesture = .idle
+            phase = .idle
+            pending = .tap
+            note("点按 \(selectedShortcut.title)")
+            return
+        }
         switch gesture {
         case .holding:
             gesture = .released
             releasedAt = now
             pending = .release
-            publish(.released, "松开，结束监听")
+            publish(.released, "松开快捷键")
         case .released where sendOnRepress && now - releasedAt <= sendWindow:
             gesture = .idle
             pending = .send
@@ -640,47 +798,34 @@ final class HoldModel: ObservableObject {
         default:
             gesture = .holding
             pending = .holdDown
-            publish(.holding, "按下，开始监听")
+            publish(.holding, "按住快捷键")
         }
     }
 
-    func handleCommand(_ event: CGEvent) -> Bool {
-        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        guard keyCode == rightCommand else { return false }
-        let isDown = event.flags.contains(.maskCommand)
-        if !isDown {
-            if swallowUp {
-                swallowUp = false
-                return true
-            }
-            if passUp {
-                passUp = false
-                return false
-            }
-            return false
+    func handleCarrier(_ event: CGEvent) -> Bool {
+        guard event.getIntegerValueField(.eventSourceUserData) != mivoEventTag,
+              event.getIntegerValueField(.keyboardEventKeycode) == Int64(carrierKey) else { return false }
+        if event.type == .keyUp {
+            guard swallowUp else { return false }
+            swallowUp = false
+            return true
         }
+        guard event.type == .keyDown else { return false }
+        if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { return swallowUp }
         let now = ProcessInfo.processInfo.systemUptime
-        guard lastHIDAt > 0, now - lastHIDAt < 0.3, let action = pending else { return false }
+        guard controlling, lastHIDAt > 0, now - lastHIDAt < 0.3, let action = pending else { return false }
         pending = nil
-        switch action {
-        case .holdDown:
-            swallowUp = true
-            return false
-        case .release:
-            passUp = true
-            return true
-        case .send:
-            swallowUp = true
-            if developerMode {
-                note("[模拟] 发送回车（未向系统发送）")
-            } else {
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, !self.developerMode, self.controlling else { return }
-                    postReturn()
-                }
+        swallowUp = true
+        if developerMode { perform(action) }
+        else {
+            // Wait until the transport event has been swallowed before injecting output.
+            let generation = outputGeneration
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.controlling, self.outputGeneration == generation else { return }
+                self.perform(action)
             }
-            return true
         }
+        return true
     }
 
     func publish(_ next: Phase, _ text: String) {
@@ -795,8 +940,8 @@ struct StatusPanel: View {
                             .accessibilityLabel("发送窗口剩余时间")
                     } else {
                         Text(model.phase == .holding && model.controlling
-                             ? "右 Command 保持按下"
-                             : "千问 · 按住监听 · 右 Command")
+                             ? "\(model.selectedShortcut.title) 保持按下"
+                             : model.shortcutDescription)
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -844,9 +989,144 @@ struct StatusPanel: View {
     }
 }
 
+struct ShortcutEditor: View {
+    @ObservedObject var model: HoldModel
+    let dismiss: () -> Void
+    @State private var draft = ""
+
+    private var parsed: SimulatedShortcut? { SimulatedShortcut.parse(draft) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("自定义模拟按键").font(.headline)
+            TextField("例如 Option + Space", text: $draft)
+                .textFieldStyle(.roundedBorder)
+            ShortcutRecorder { shortcut in draft = shortcut.title }.frame(height: 26)
+            Text("可输入键名或录入组合键，左右修饰键分别识别。")
+                .font(.caption).foregroundStyle(.secondary)
+            if !draft.isEmpty && parsed == nil {
+                Text("请输入一个按键，或修饰键与一个普通键的组合。")
+                    .font(.caption).foregroundStyle(.red)
+            }
+            HStack {
+                Spacer()
+                Button("取消", action: dismiss)
+                Button("使用此按键") {
+                    guard let shortcut = parsed else { return }
+                    model.configureShortcut(preset: .custom, custom: shortcut)
+                    dismiss()
+                }.disabled(parsed == nil)
+            }
+        }
+        .padding(18).frame(width: 330)
+        .onAppear { draft = model.customShortcut.title }
+    }
+}
+
+struct ShortcutRecorder: NSViewRepresentable {
+    let onCapture: (SimulatedShortcut) -> Void
+    func makeNSView(context: Context) -> ShortcutRecorderButton {
+        let button = ShortcutRecorderButton(title: "从键盘录入…", target: nil, action: nil)
+        button.bezelStyle = .rounded
+        button.target = button
+        button.action = #selector(ShortcutRecorderButton.toggleRecording)
+        button.onCapture = onCapture
+        return button
+    }
+    func updateNSView(_ button: ShortcutRecorderButton, context: Context) { button.onCapture = onCapture }
+    static func dismantleNSView(_ button: ShortcutRecorderButton, coordinator: ()) { button.stopRecording() }
+}
+
+final class ShortcutRecorderButton: NSButton {
+    var onCapture: ((SimulatedShortcut) -> Void)?
+    private var monitor: Any?
+    private var resignObserver: NSObjectProtocol?
+    private var recordedModifiers: [CGKeyCode] = []
+    override var acceptsFirstResponder: Bool { true }
+
+    @objc func toggleRecording() {
+        if monitor != nil { stopRecording(); return }
+        title = "请按快捷键，Esc 取消…"
+        recordedModifiers = []
+        window?.makeFirstResponder(self)
+        // NSPopover's content window need not be the key window: AppKit can route
+        // its keyboard events through the parent settings window (or no window).
+        // A local monitor is already app-scoped; its lifetime defines capture scope.
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+            guard let self else { return event }
+            guard NSApp.isActive, self.window?.isVisible == true else {
+                self.stopRecording()
+                return event
+            }
+            return self.consumeRecordingEvent(event)
+        }
+        resignObserver = NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification,
+                                                               object: nil, queue: .main) { [weak self] _ in
+            self?.stopRecording()
+        }
+    }
+
+    func consumeRecordingEvent(_ event: NSEvent) -> NSEvent? {
+        guard monitor != nil else { return event }
+        if event.type == .keyDown && event.keyCode == 53 { stopRecording(); return nil }
+        let keys = Self.shortcutKeys(for: event, knownModifiers: recordedModifiers)
+        recordedModifiers = keys.filter { SimulatedShortcut.modifierNames[$0] != nil }
+        let shortcut = SimulatedShortcut(keys: keys)
+        if shortcut.isValid { onCapture?(shortcut) }
+        if event.type == .keyDown { stopRecording() }
+        return nil
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { stopRecording() }
+    }
+
+    static func shortcutKeys(for event: NSEvent, knownModifiers: [CGKeyCode] = []) -> [CGKeyCode] {
+        let flags = UInt64(event.modifierFlags.rawValue)
+        var keys: [CGKeyCode] = []
+        let families: [(CGEventFlags, [CGKeyCode])] = [
+            (.maskControl, [0x3B,0x3E]), (.maskAlternate, [0x3A,0x3D]),
+            (.maskShift, [0x38,0x3C]), (.maskCommand, [0x37,0x36])
+        ]
+        for (aggregate, sides) in families where flags & aggregate.rawValue != 0 {
+            let physical = sides.filter { key in
+                let mask = SimulatedShortcut.modifierFlags(for: key).rawValue & 0xFFFF
+                return flags & mask != 0
+            }
+            if !physical.isEmpty { keys += physical }
+            else if event.type == .flagsChanged && sides.contains(event.keyCode) {
+                // A modifier's own event identifies its side even without device flags.
+                keys.append(event.keyCode)
+            } else {
+                let remembered = sides.filter { knownModifiers.contains($0) }
+                // AppKit / synthetic events may expose only aggregate modifier flags.
+                keys += remembered.isEmpty ? [sides[0]] : remembered
+            }
+        }
+        if flags & CGEventFlags.maskSecondaryFn.rawValue != 0 { keys.append(0x3F) }
+        if event.type == .keyDown && SimulatedShortcut.modifierNames[event.keyCode] == nil {
+            keys.append(event.keyCode)
+        }
+        return keys
+    }
+
+    func stopRecording() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        resignObserver = nil
+        title = "从键盘录入…"
+    }
+    deinit {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var model: HoldModel
     @Environment(\.openWindow) private var openWindow
+    @State private var showShortcutEditor = false
     @State private var showPermissionHelp = false
     @State private var versionClicks = 0
     @State private var lastVersionClick = Date.distantPast
@@ -870,21 +1150,51 @@ struct SettingsView: View {
                     .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 13))
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Mivo").font(.title2.weight(.semibold))
-                    Text("用接收器按键，轻松开始语音输入")
+                    Text("用麦克风按键，控制你的输入快捷键")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
             }
             GroupBox {
                 VStack(alignment: .leading, spacing: 9) {
                     HStack {
-                        Text("结束后再按发送")
+                        Text("模拟方式")
                         Spacer()
-                        Toggle("结束后再按发送", isOn: $model.sendOnRepress)
-                            .labelsHidden().toggleStyle(.switch)
+                        Picker("模拟方式", selection: Binding(get: { model.simulationMode }, set: { model.configureShortcut(mode: $0) })) {
+                            ForEach(SimulationMode.allCases) { mode in Text(mode.title).tag(mode) }
+                        }.pickerStyle(.segmented).labelsHidden().frame(width: 144)
                     }
-                    Text("结束监听后，3 秒内再次按键发送回车。关闭后，再次按键开始新的语音输入。")
+                    HStack {
+                        Text("模拟按键")
+                        Spacer()
+                        Menu {
+                            ForEach(ShortcutPreset.allCases) { preset in
+                                Button {
+                                    if preset == .custom { showShortcutEditor = true }
+                                    else { model.configureShortcut(preset: preset) }
+                                } label: {
+                                    if model.shortcutPreset == preset { Label(preset.title, systemImage: "checkmark") }
+                                    else { Text(preset.title) }
+                                }
+                            }
+                        } label: {
+                            Text(model.shortcutPreset == .custom ? model.customShortcut.title : model.shortcutPreset.title)
+                                .lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .trailing)
+                        }.frame(width: 180)
+                            .popover(isPresented: $showShortcutEditor) {
+                                ShortcutEditor(model: model) { showShortcutEditor = false }
+                            }
+                    }
+                    Text(model.modeInstruction)
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Text("结束后再按发送")
+                        Spacer()
+                        Text(model.simulationMode == .tap ? "仅按住模式可用" : "3 秒内发送回车")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Toggle("结束后再按发送", isOn: $model.sendOnRepress)
+                            .labelsHidden().toggleStyle(.switch)
+                    }.disabled(model.simulationMode == .tap)
                     Divider().padding(.vertical, 3)
                     HStack {
                         Text("显示悬浮提示")
@@ -926,7 +1236,7 @@ struct SettingsView: View {
                         .popover(isPresented: $showPermissionHelp) { PermissionHelpView(model: model) }
                 }
             }
-            Text("千问需设为「按住监听」，快捷键为右 Command。")
+            Text(model.selectedShortcut.includesFn ? "Fn / 🌐 为实验支持，需在目标应用中验证。" : "请在目标应用中设置相同的按键与触发方式。")
                 .font(.caption).foregroundStyle(.secondary)
             if model.developerMode {
                 DeveloperControls(model: model)
@@ -1201,7 +1511,7 @@ final class FloatingActionController: NSObject, NSWindowDelegate {
         let action = model.nextButtonAction
         let text = action == .unavailable
             ? (model.controlError == nil ? model.title : "暂时无法使用")
-            : "下一次短按配对键：\(action.title)"
+            : "下一次短按配对键：\(model.nextActionTitle)"
         let help = (model.developerMode ? "开发模式（模拟） · " : "") + text
         if panel.contentView?.toolTip != help { panel.contentView?.toolTip = help }
     }
@@ -1264,14 +1574,14 @@ struct FloatingActionView: View {
     private var tint: Color {
         switch action {
         case .unavailable: return .secondary
-        case .startListening: return .blue
+        case .startListening, .tapShortcut: return .blue
         case .stopListening: return .orange
         case .sendReturn: return .green
         }
     }
     private var actionTitle: String {
         if action == .unavailable { return model.controlError == nil ? model.title : "暂时无法使用" }
-        return action.title
+        return model.nextActionTitle
     }
 
     var body: some View {

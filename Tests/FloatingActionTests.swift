@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 final class PointerDispatchProbe: FloatingActionSurface {
     var received: [NSEvent.EventType] = []
@@ -14,6 +15,7 @@ struct FloatingActionTests {
     static func main() {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
+        testShortcutRecorder()
         let domain = "local.mivo.floating-tests.\(UUID().uuidString)"
         let preferences = UserDefaults(suiteName: domain)!
         defer { preferences.removePersistentDomain(forName: domain) }
@@ -97,6 +99,97 @@ struct FloatingActionTests {
         let (third, recovered) = makePanel()
         precondition(NSScreen.screens.contains { $0.visibleFrame.contains(recovered.frame) })
         print("PASS: a saved position outside connected displays is recovered on screen.")
+        if let index = CommandLine.arguments.firstIndex(of: "--render-settings-to"),
+           CommandLine.arguments.indices.contains(index + 1) {
+            let directory = URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true)
+            try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let settingsModel = HoldModel(preferences: preferences, developerMode: false,
+                                          permissionProbe: { SystemPermissions(accessibility: false, inputMonitoring: false) })
+            func capture<V: View>(_ view: V, name: String, expectedWidth: CGFloat) {
+                let host = NSHostingView(rootView: view)
+                let bounds = NSRect(origin: .zero, size: host.fittingSize)
+                precondition(bounds.width == expectedWidth && bounds.height > 100)
+                host.frame = bounds
+                let window = NSWindow(contentRect: bounds, styleMask: [.titled], backing: .buffered, defer: false)
+                window.contentView = host
+                host.layoutSubtreeIfNeeded()
+                host.display()
+                let image = host.bitmapImageRepForCachingDisplay(in: bounds)!
+                host.cacheDisplay(in: bounds, to: image)
+                try! image.representation(using: .png, properties: [:])!.write(to: directory.appendingPathComponent(name))
+                withExtendedLifetime(window) {}
+            }
+            for mode in SimulationMode.allCases {
+                settingsModel.configureShortcut(mode: mode)
+                capture(SettingsView(model: settingsModel), name: "settings-\(mode.rawValue).png", expectedWidth: 470)
+            }
+            capture(ShortcutEditor(model: settingsModel, dismiss: {}).background(Color(nsColor: .windowBackgroundColor)),
+                    name: "shortcut-editor.png", expectedWidth: 330)
+            print("PASS: settings keep 470-point width; rendered hold, tap and custom editor previews.")
+        }
         withExtendedLifetime([first, second, third]) {}
     }
+    static func testShortcutRecorder() {
+        let rightCommand = NSEvent.ModifierFlags(rawValue: UInt(SimulatedShortcut.modifierFlags(for: 0x36).rawValue))
+        let option = NSEvent.ModifierFlags(rawValue: UInt(SimulatedShortcut.modifierFlags(for: 0x3A).rawValue))
+        let combination = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [rightCommand, option],
+                                          timestamp: 0, windowNumber: 0, context: nil,
+                                          characters: " ", charactersIgnoringModifiers: " ", isARepeat: false, keyCode: 49)!
+        precondition(ShortcutRecorderButton.shortcutKeys(for: combination) == [0x3A, 0x36, 49])
+        let aggregateOnly = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.control, .option],
+                                            timestamp: 0, windowNumber: 0, context: nil,
+                                            characters: "k", charactersIgnoringModifiers: "k", isARepeat: false, keyCode: 40)!
+        precondition(ShortcutRecorderButton.shortcutKeys(for: aggregateOnly) == [0x3B,0x3A,40])
+        let rightOnly = NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: .command,
+                                        timestamp: 0, windowNumber: 0, context: nil,
+                                        characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 0x36)!
+        precondition(ShortcutRecorderButton.shortcutKeys(for: rightOnly) == [0x36])
+        let commandChord = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                                           timestamp: 0, windowNumber: 0, context: nil,
+                                           characters: "k", charactersIgnoringModifiers: "k", isARepeat: false, keyCode: 40)!
+        precondition(ShortcutRecorderButton.shortcutKeys(for: commandChord, knownModifiers: [0x36]) == [0x36,40])
+        let fn = NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: .function,
+                                 timestamp: 0, windowNumber: 0, context: nil,
+                                 characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 0x3F)!
+        precondition(ShortcutRecorderButton.shortcutKeys(for: fn) == [0x3F])
+        // AppKit may associate popover input with its parent window or window 0.
+        // Exercise the recorder state machine with both, not just the key decoder.
+        let recorder = ShortcutRecorderButton(title: "从键盘录入…", target: nil, action: nil)
+        var captured: [SimulatedShortcut] = []
+        recorder.onCapture = { captured.append($0) }
+        let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        let fromParent = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                         timestamp: 0, windowNumber: parent.windowNumber, context: nil,
+                                         characters: "a", charactersIgnoringModifiers: "a", isARepeat: false, keyCode: 0)!
+        recorder.toggleRecording()
+        precondition(recorder.consumeRecordingEvent(fromParent) == nil)
+        precondition(captured.last?.keys == [0] && recorder.title == "从键盘录入…")
+        precondition(recorder.consumeRecordingEvent(fromParent) === fromParent)
+        recorder.toggleRecording()
+        precondition(recorder.consumeRecordingEvent(fn) == nil && captured.last?.keys == [0x3F])
+        NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: NSApp)
+        precondition(recorder.title == "从键盘录入…")
+        recorder.toggleRecording()
+        let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                     timestamp: 0, windowNumber: 0, context: nil,
+                                     characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 53)!
+        let beforeEscape = captured.count
+        precondition(recorder.consumeRecordingEvent(escape) == nil && captured.count == beforeEscape)
+        precondition(recorder.consumeRecordingEvent(combination) === combination)
+        recorder.toggleRecording()
+        _ = recorder.consumeRecordingEvent(aggregateOnly)
+        precondition(captured.last?.keys == [0x3B,0x3A,40])
+        recorder.toggleRecording()
+        _ = recorder.consumeRecordingEvent(rightOnly)
+        _ = recorder.consumeRecordingEvent(commandChord)
+        precondition(captured.last?.keys == [0x36,40])
+        recorder.toggleRecording()
+        _ = recorder.consumeRecordingEvent(combination)
+        precondition(captured.last?.keys == [0x3A,0x36,49])
+        withExtendedLifetime(parent) {}
+        print("PASS: recorder accepts parent-window and windowless input, cancels on Esc / app deactivation, and stops intercepting after capture.")
+        print("PASS: shortcut recorder captures modifier sides, combinations and Fn.")
+    }
+
 }

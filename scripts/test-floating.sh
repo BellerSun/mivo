@@ -17,4 +17,4 @@ swiftc -parse-as-library \
   -framework CoreGraphics -framework IOKit \
   "$TEST_DIR/HoldApp.swift" "$ROOT/Tests/FloatingActionTests.swift" \
   -o "$TEST_DIR/FloatingActionTests"
-"$TEST_DIR/FloatingActionTests"
+"$TEST_DIR/FloatingActionTests" "$@"
