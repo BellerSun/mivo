@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100">
+  <title>Mivo — B01</title>
+  <g transform="matrix(1 0 0 1.015873015873 0 -4.349206349206)" fill="none" stroke="#000" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 85V22L41 45V53Q41 62 50 62Q59 62 59 53V45L82 22V85"/>
+    <path d="M41 45V44Q41 35 50 35Q59 35 59 44V45"/>
+    <path d="M32 53V60L50 76L68 60V53"/>
+    <path d="M50 76V85M41 85H59"/>
+  </g>
+</svg>

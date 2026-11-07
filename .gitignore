@@ -1,0 +1,23 @@
+.DS_Store
+*.app
+.build/
+DerivedData/
+
+# Signing credentials belong in Keychain, never in this repository.
+*.p12
+*.pfx
+*.key
+
+# Local settings, diagnostics and Python caches.
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+*.log
+sec_report/
+signing.json
+signing-public.pem
+
+# Local agent instructions are not part of the public repository.
+/AGENTS.md
